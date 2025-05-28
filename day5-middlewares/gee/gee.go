@@ -1,0 +1,91 @@
+// day5 增加了 Use 方法，使得可以将中间件添加到 RouterGroup 中
+// day5 在 ServeHTTP 方法中增加了中间件的支持，遍历组并检查请求路径，动态添加中间件到请求上下文中
+package gee
+
+import (
+	"log"
+	"net/http"
+	"strings"
+)
+
+type HandlerFunc func(*Context)
+
+type (
+	RouterGroup struct {
+		prefix      string
+		middlewares []HandlerFunc
+		parent      *RouterGroup
+		engine      *Engine
+	}
+	Engine struct {
+		*RouterGroup
+		router *router
+		groups []*RouterGroup
+	}
+)
+
+func New() *Engine {
+	engine := &Engine{router: newRouter()}
+	engine.RouterGroup = &RouterGroup{engine: engine}
+	engine.groups = []*RouterGroup{engine.RouterGroup}
+	return engine
+}
+
+func (group *RouterGroup) Group(prefix string) *RouterGroup {
+	engine := group.engine
+	newGroup := &RouterGroup{
+		prefix: group.prefix + prefix,
+		parent: group,
+		engine: engine,
+	}
+	engine.groups = append(engine.groups, newGroup)
+	return newGroup
+}
+
+// NEW:
+// Use方法 允许开发者为某个路由分组注册中间件
+func (group *RouterGroup) Use(middlewares ...HandlerFunc) { // 参数是变长的 HandlerFunc 类型的中间件函数
+	group.middlewares = append(group.middlewares, middlewares...)
+}
+
+func (group *RouterGroup) addRoute(method string, comp string, handler HandlerFunc) {
+	pattern := group.prefix + comp
+	log.Printf("Route %4s - %s", method, pattern)
+	group.engine.router.addRoute(method, pattern, handler)
+}
+
+func (group *RouterGroup) GET(pattern string, handler HandlerFunc) {
+	group.addRoute("GET", pattern, handler)
+}
+
+func (group *RouterGroup) POST(pattern string, handler HandlerFunc) {
+	group.addRoute("POST", pattern, handler)
+}
+
+func (engine *Engine) Run(addr string) (err error) {
+	return http.ListenAndServe(addr, engine)
+}
+
+// PERF:
+// 增加了中间件的处理逻辑。
+//
+/* ServeHTTP 的主要作用。
+* 实现了请求的分组处理机制。
+* 支持中间件的动态添加和执行。
+* 统一了请求的处理入口。
+* 为每个请求提供了独立的上下文环境。
+* */
+func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	var middlewares []HandlerFunc         // 声明一个中间件处理函数的切片，初始化为空，用来存放匹配上的路由组的中间件
+	for _, group := range engine.groups { // 遍历所有路由组,收集请求路径匹配的分组中间件
+		if strings.HasPrefix(req.URL.Path, group.prefix) { // 检查请求路径是否以该路由分组的前缀开始
+			middlewares = append(middlewares, group.middlewares...) // 如果匹配，就将当前分组的所有中间件收集起来
+		}
+	}
+
+	// 创建上下文，并将中间件链赋值给 c.handlers 字段中
+	// 这些中间件将会按照顺序在 c.Next() 中依次执行
+	c := newContext(w, req)
+	c.handlers = middlewares
+	engine.router.handle(c) // 调用路由器的处理函数（中间件将在Context.New()中被依次调用）
+}

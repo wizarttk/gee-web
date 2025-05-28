@@ -1,0 +1,84 @@
+package gee
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+)
+
+// 代码最开头，给map[string]interface{}起一个别名gee.H，构建JSON数据时，显得更简洁
+type H map[string]interface{}
+
+type Context struct {
+	// origin objects 原始对象
+	Writer http.ResponseWriter
+	Req    *http.Request
+	// request info 请求信息
+	Path   string
+	Method string
+	// response info 响应信息
+	StatusCode int
+}
+
+func newContext(w http.ResponseWriter, req *http.Request) *Context {
+	return &Context{
+		Writer: w,
+		Req:    req,
+
+		Path:   req.URL.Path,
+		Method: req.Method,
+	}
+}
+
+// 获取POST请求中的表单参数
+func (c *Context) PostForm(key string) string {
+	return c.Req.FormValue(key)
+}
+
+// 获取URL中的查询参数
+func (c *Context) Query(key string) string {
+	return c.Req.URL.Query().Get(key)
+}
+
+// 设置HTTP响应中的状态码
+func (c *Context) Status(code int) {
+	c.StatusCode = code
+	c.Writer.WriteHeader(code)
+}
+
+// 设置HTTP响应头
+func (c *Context) SetHeader(key string, value string) {
+	c.Writer.Header().Set(key, value)
+}
+
+// 生成文本响应，设置"Content-Type"为"text/plain"，然后写入格式化的字符串
+func (c *Context) String(code int, format string, values ...interface{}) {
+	c.SetHeader("Content-Type", "text/plain") // 表示响应内容是纯文本
+	c.Status(code)
+	c.Writer.Write([]byte(fmt.Sprintf(format, values...))) // 格式化字符串并写入响应
+}
+
+// 将传入的对象编码为 JSON 格式，并发送给客户端作为 HTTP 响应。
+// 生成JSON响应，设置"Content-Type"为"application/json"
+// 然后使用"json.Encoder"将对象编码为JSON写入响应。如果编码过程中出现错误，返回500错误
+func (c *Context) JSON(code int, obj interface{}) { // obj为要编码的对象
+	c.SetHeader("Content-Type", "application/json")
+	c.Status(code)
+	encoder := json.NewEncoder(c.Writer)
+	if err := encoder.Encode(obj); err != nil {
+		http.Error(c.Writer, err.Error(), 500)
+	}
+}
+
+// 生成二进制数据响应，写入原始的字节数组
+func (c *Context) Data(code int, data []byte) {
+	c.Status(code)
+	c.Writer.Write(data)
+}
+
+// 生成HTML响应，生成"Content-Type"为"text/html"，然后写入HTML字符串
+func (c *Context) HTML(code int, html string) {
+	c.SetHeader("Content-Type", "text/html")
+	c.Status(code)
+	c.Writer.Write([]byte(html))
+}

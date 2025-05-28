@@ -1,0 +1,123 @@
+package gee
+
+import (
+	"net/http"
+	"strings"
+)
+
+type router struct {
+	roots    map[string]*node // NEW: 每个 HTTP 方法对应一个 Trie 树根节点（例如："GET"、"POST"）
+	handlers map[string]HandlerFunc
+}
+
+func newRouter() *router {
+	return &router{
+		roots:    make(map[string]*node), // NEW:初始化 Trie 树的根节点映射
+		handlers: make(map[string]HandlerFunc),
+	}
+}
+
+// NEW: 新增 ParsePattern函数
+// 解析路径。将路径按"/"分割成一个字符串数组parts,用于在Trie树中插入和匹配路径
+// 忽略空字符串,避免将连续的"/"或首位的"/"解析为空部分
+// 如果遇到*会立即停止处理，且*之后的部分不会再被分割,因为*通配符代表匹配剩余的所有路径。
+// /p/:lang/doc       vs为 ["", "p", ":lang", "doc"]    解析结果parts是["p", ":lang", "doc"]
+// /static/*filepath  vs为 ["", "static", "*filepath"]  解析结果parts是["static", "*filepath"]
+// /p/                vs为 ["", "p", ""]                解析结果parts是["p"]
+func parsePattern(pattern string) []string {
+	vs := strings.Split(pattern, "/")
+
+	parts := make([]string, 0)
+	for _, item := range vs {
+		if item != "" {
+			parts = append(parts, item)
+			if item[0] == '*' {
+				break // 停止解析,确保'*'只能出现在结尾
+			}
+		}
+	}
+	return parts
+}
+
+// PERF: addRoute方法 改为使用Trie树插入路由规则(构建Trie树)
+// 1. 解析完整路由路径patern，将其拆分为片段parts。
+// 2. 将路径模式和片段插入到对应的HTTP方法的Trie树中，以构建路由结构。
+// 3. 将路由模式与处理函数相关联，存储在handlers中，以便后续快速查找和使用。
+func (r *router) addRoute(method string, pattern string, handler HandlerFunc) {
+	parts := parsePattern(pattern) // 将完整路径pattern解析为一个切片parts,这个切片用于在Trie中插入和匹配路径
+	key := method + "-" + pattern  // 构造 key，格式为 "METHOD-PATTERN"，确保不同请求可以唯一匹配到处理函数。
+
+	_, ok := r.roots[method] // 检查roots中是否存在对应请求方法的根节点
+	if !ok {
+		r.roots[method] = &node{} // 如果不存在，则创建一个新的node，并将其作为该方法的根节点,这确保每个请求方法都有自己的 Trie 树来存储路径。
+	}
+	r.roots[method].insert(pattern, parts, 0) // 将路径模式和解析出来的parts插入到对应请求方法的Trie树中
+	r.handlers[key] = handler                 // 将处理函数存储到handlers中，使用key作为索引
+}
+
+// NEW: getRoute方法
+// 根据请求的HTTP方法和请求路径，通过 Trie 树查找与之匹配的路由，并解析路径中的动态参数
+// 1. 查找路由：从存储在 router 中的 Trie 树中，根据请求的 HTTP 方法（如 GET、POST 等）和路径（如 /p/go/doc）查找是否存在匹配的路由模式。
+// 2. 解析参数：如果匹配到的路由模式包含动态参数（如 :lang 或 *filepath），它会从请求路径中提取对应的参数值，并返回参数映射（map）。
+//
+// c.Path    是客户端请求的实际路径，用于匹配路由和处理 404 错误。 例: /p/go/doc
+// n.pattern 是注册时的路由模式（完整路径），包含动态参数，并用于构建查找处理函数的唯一键(key = c.Method + n.pattern)。 例: /p/:lang/doc
+func (r *router) getRoute(method string, path string) (*node, map[string]string) { // path代表从HTTP客户端发起HTTP请求的完整路径，例如 /users/123/profile
+	searchParts := parsePattern(path) // 将查询路径解析为parts
+	params := make(map[string]string) // 创建一个映射 params 存储路径参数
+	root, ok := r.roots[method]       // 在router的根节点映射（roots）中查找对应HTTP方法（method）的根节点（root）
+
+	if !ok { // 如果没找到对应的根节点，
+		return nil, nil // 返回nil, nil，表示没有匹配到的路由节点和路径参数
+	}
+
+	n := root.search(searchParts, 0) // 调用根节点（root）的search方法，查找与解析后的路径片段（searchParts）匹配的节点（n）
+
+	if n != nil { // 如果找到匹配的节点（n），进入代码快
+		parts := parsePattern(n.pattern) // 调用parsePattern函数将匹配节点的模式（n.pattern）解析成片段数组（parts）解析成片段数组（parts）解析成片段数组（parts）解析成片段数组（parts）解析成片段数组（parts）解析成片段数组（parts）解析成片段数组（parts）解析成片段数组（parts）
+		for index, part := range parts { // 对解析后的数组片段（parts）进行遍历
+			if part[0] == ':' { // 如果片段以：开头，表示这是一个命名参数
+				params[part[1:]] = searchParts[index] // 将命名参数的名称（去掉:）作为键，对应的路径片段作为值，存入params映射
+			}
+			if part[0] == '*' && len(part) > 1 { // 如果片段以*开头且长度大于1，表示这是一个通配符参数
+				// 将通配符参数的名称（*）作为键，从当前位置开始的所有路径片段拼接成字符串作为值，存入params数组
+				params[part[1:]] = strings.Join(searchParts[index:], "/")
+				break // 处理完通配符参数后，退出循环
+			}
+		}
+		return n, params //  返回匹配到的节点（n）和路径参数（params）
+	}
+
+	return nil, nil //  如果没有找到匹配的节点，返回nil, nil
+}
+
+// NEW: getRoutes 获取指定 HTTP 方法的所有路由节点
+func (r *router) getRoutes(method string) []*node {
+	root, ok := r.roots[method] // 查找对应方法的根节点
+	if !ok {
+		return nil
+	}
+
+	nodes := make([]*node, 0) // 创建一个空的节点切片
+	root.travel(&nodes)       // 从根节点开始遍历，将所有匹配的节点添加到nodes切片中（因为参数是切片的指针，所以对函数外部的切片进行修改）
+	return nodes
+}
+
+// PERF: handle
+// 使用 r.getRoute 根据请求的 HTTP 方法和路径查找匹配的路由节点，提取路径参数，并调用对应的处理函数(handle)处理请求；
+// 如果未找到匹配的路由，则返回 404 错误响应。
+// c.Path    是客户端请求的实际路径，用于匹配路由和处理 404 错误。 例: /p/go/doc
+// n.pattern 是注册时的路由模式（完整路径），包含动态参数，并用于构建查找处理函数的唯一键(key = c.Method + n.pattern)。 例: /p/:lang/doc
+func (r *router) handle(c *Context) {
+	n, params := r.getRoute(c.Method, c.Path) // 使用请求方法和路径来查找路由节点和路由参数
+	if n != nil {                             // 如果找到了匹配的路由节点
+		c.Params = params // 将解析出来的路径参数赋值给上下文的Params
+		// 生成一个键值，用于在handlers中找到对应的处理函数间接
+		// 键值由请求方法和路由模式组成，例如："GET-/p/:lang/doc"
+		key := c.Method + "-" + n.pattern
+		r.handlers[key](c) // 执行匹配到的处理函数，并将上下文c传递进去
+	} else {
+		//  如果没有找到匹配的路由，返回404错误响应
+		c.String(http.StatusNotFound, "404 NOT FOUND: %s\n", c.Path)
+	}
+}

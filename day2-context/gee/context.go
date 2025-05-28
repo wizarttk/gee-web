@@ -1,0 +1,85 @@
+package gee
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+)
+
+// H 是一个类型别名，简化 map[string]interface{} 的使用，常用于构建 JSON 数据
+// 这种类型通常用于需要动态或任意值的场景，比如JSON数据。
+// 由于JSON对象本身是键值对的集合，其中键是字符串，值可以使任何类型
+// map[string]interface{}非常适合用来表示JSON对象
+type H map[string]interface{}
+
+// Context 保存了每个 HTTP 请求的相关信息，封装了 http.Request 和 http.ResponseWriter
+// 他是处理请求和生成响应的核心结构
+type Context struct {
+	Writer     http.ResponseWriter // HTTP 响应的写入器
+	Req        *http.Request       // HTTP 请求对象
+	Method     string              // 请求的 URL 路径
+	Path       string              // HTTP 请求方法（GET, POST, etc.）
+	StatusCode int                 // HTTP 响应状态码
+}
+
+// newContext 用于创建一个新的 Context，传入 http。ResponseWriter 和 *http.Request
+// 该函数会将请求路径和方法保存到 Context 中，以便后续使用
+func newContext(w http.ResponseWriter, req *http.Request) *Context {
+	return &Context{
+		Writer: w,
+		Req:    req,
+		Method: req.Method,
+		Path:   req.URL.Path,
+	}
+}
+
+// PostForm 获取 POST 请求中的表单数据
+func (c *Context) PostForm(key string) string {
+	return c.Req.FormValue(key) // 返回对应 key 的表单字段值
+}
+
+// Query 获取 URL 查询参数中的数据
+func (c *Context) Query(key string) string {
+	return c.Req.URL.Query().Get(key)
+}
+
+// Status 设置响应的 HTTP 状态码
+func (c *Context) Status(code int) {
+	c.StatusCode = code
+	c.Writer.WriteHeader(code)
+}
+
+// SetHeader 设置HTTP响应头中的某个字段
+func (c *Context) SetHeader(key string, value string) {
+	c.Writer.Header().Set(key, value)
+}
+
+// String 以纯文本格式构造响应
+func (c *Context) String(code int, format string, values ...interface{}) {
+	c.SetHeader("Content-Type", "text/plain")              // 设置响应头的内容为文本
+	c.Status(code)                                         // 设置响应状态码
+	c.Writer.Write([]byte(fmt.Sprintf(format, values...))) // 写入相应体
+}
+
+// JSON 以 JSON 格式构造响应
+func (c *Context) JSON(code int, obj interface{}) {
+	c.SetHeader("Content-Type", "text/plain")
+	c.Status(code)
+	encoder := json.NewEncoder(c.Writer)        // 创建一个 JSON 编码器
+	if err := encoder.Encode(obj); err != nil { // 将对象编码为 JSON 并写入响应体
+		http.Error(c.Writer, err.Error(), 500) // 如果有错误，返回 500 错误
+	}
+}
+
+// Data 以原始数据格式构造响应
+func (c *Context) Data(code int, data []byte) {
+	c.Status(code)
+	c.Writer.Write(data)
+}
+
+// HTML 以 HTML 格式构造响应
+func (c *Context) HTML(code int, html string) {
+	c.SetHeader("Content-Type", "text/plain")
+	c.Status(code)
+	c.Writer.Write([]byte(html))
+}

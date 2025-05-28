@@ -1,0 +1,36 @@
+package main
+
+import (
+	"gee"
+	"net/http"
+)
+
+func main() {
+	r := gee.New()
+
+	// 定义一个处理GET请求的路由和处理函数
+	r.GET("/", func(c *gee.Context) {
+		// 响应一个HTTP状态码200（OK）和HTML内容
+		c.HTML(http.StatusOK, "<h1>Hello Gee</h1>")
+	})
+
+	// 定义另一个处理带查询参数的GET请求的路由和处理函数
+	r.GET("/hello", func(c *gee.Context) {
+		// 期望请求URL为/hello?name=geektutu
+		// 响应一个HTTP状态码200（OK）和格式化的字符串，使用查询参数中的name值和请求路径
+		c.String(http.StatusOK, "hello %s, you're at %s\n", c.Query("name"), c.Path)
+	})
+
+	// 定义一个处理POST请求的路由和处理函数
+	r.POST("/login", func(c *gee.Context) {
+		// 响应一个HTTP状态码200（OK）和JSON内容
+		// 从POST表单数据中获取username和password字段，并将其作为JSON响应返回
+		c.JSON(http.StatusOK, gee.H{
+			"username": c.PostForm("username"),
+			"password": c.PostForm("password"),
+		})
+	})
+
+	// 启动Web服务器，监听端口9999
+	r.Run(":9999")
+}

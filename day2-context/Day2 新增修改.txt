@@ -1,0 +1,10 @@
+1. 引入 router 结构体
+- Day1 版本中，路由信息直接保存在 Engine 的 router 字段中。
+  Day2 版本将路由相关功能抽象为独立的 router 结构体，使代码结构更加清晰，便于维护和扩展。
+
+2. 修改 HandlerFunc 类型：
+- Day1 版本的 HandlerFunc 类型定义为 func(http.ResponseWriter, *http.Request)，直接操作 http.ResponseWriter 和*http.Request。
+  Day2 版本将其修改为 func(*Context)，通过传递 Context 对象，处理函数可以更方便地访问请求信息和构造响应。
+
+3. 实现 ServeHTTP 方法：
+- Day2 版本的 Engine 结构体实现了 http.Handler 接口的 ServeHTTP 方法。在该方法中，首先创建一个 Context 实例，然后调用路由的 handle 方法处理请求。这种设计使得请求处理流程更加清晰，并为未来添加中间件等功能提供了基础。
